@@ -1,42 +1,84 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- handle argument(s) safely ---
-if [ "$#" -lt 1 ]; then
-  echo "Usage: $0 <facebook-redirect-or-url>"
+usage() {
+  cat <<EOF
+Usage: $0 <url>
+   or:  $0 -         # read a single line URL from stdin (recommended for unquoted URLs containing &)
+   or:  echo URL | $0
+
+Note: If you pass a URL containing characters like & or ; directly on the command line, the shell
+will try to interpret them unless you quote or escape the URL. To avoid quoting, use the '-' stdin mode.
+EOF
   exit 1
+}
+
+if [ "$#" -lt 1 ]; then
+  usage
 fi
 
-input="$*"
+# Read URL:
+if [ "$1" = "-" ]; then
+  # Read a single line from stdin
+  if ! IFS= read -r input; then
+    echo "No input received on stdin." >&2
+    exit 2
+  fi
+else
+  # Use the positional arguments joined by spaces if multiple provided
+  # (Note: if you typed an unquoted URL containing &, the shell already split/handled it)
+  input="$*"
+fi
 
-# Extract u= parameter (the encoded target) if present
-uval=$(printf '%s' "$input" | sed -n 's/.*[?&]u=\([^&]*\).*/\1/p')
+# Extract u= (Facebook redirect) if present
+uval=$(printf '%s' "$input" | sed -n 's/.*[?&]u=\([^&]*\).*/\1/p' || true)
 if [ -n "$uval" ]; then
   target="$uval"
 else
   target="$input"
 fi
 
-# Decode URL and clean it
+# Python does decode, filter fbclid, and truncate after desired extensions
 clean=$(python3 - "$target" <<'PYCODE'
 import sys, urllib.parse as u, re
 
 raw = sys.argv[1]
 decoded = u.unquote(raw)
 
+# Parse URL
 parts = u.urlparse(decoded)
 qs = u.parse_qsl(parts.query, keep_blank_values=True)
+
+# Remove fbclid (case-insensitive)
 filtered = [(k,v) for (k,v) in qs if k.lower() != 'fbclid']
 
 new_query = u.urlencode(filtered, doseq=True)
 new_url = u.urlunparse((parts.scheme, parts.netloc, parts.path, parts.params, new_query, parts.fragment))
 
-# Remove anything after .html (query, fragments, etc.)
-new_url = re.sub(r'(\.html).*', r'\1', new_url, flags=re.IGNORECASE)
+# If URL has no scheme/netloc, just use decoded
+if not parts.scheme and not parts.netloc:
+    candidate = decoded
+else:
+    candidate = new_url
 
-print('\n'+new_url)
+# Trim anything after these extensions (case-insensitive). Add more if you wish.
+exts = ['html','htm','php','asp','aspx','jsp','jspx','shtml','cgi','pl','rss','xml','json']
+# Build pattern like: r'(?i)(\.(?:html|php|...))\b.*'
+pattern = r'(?i)(\.(?:' + '|'.join(re.escape(e) for e in exts) + r'))\b.*'
+trimmed = re.sub(pattern, r'\1', candidate, count=1)
+
+# If no recognized extension found, return the cleaned URL without query/fragment if possible
+if trimmed == candidate:
+    # Try removing query and fragment in general
+    p = u.urlparse(candidate)
+    trimmed = u.urlunparse((p.scheme, p.netloc, p.path, p.params, '', ''))
+    # If still empty-ish, fallback to candidate
+    if not p.scheme and not p.netloc:
+        trimmed = candidate
+
+print('\n'+trimmed)
 PYCODE
 )
 
-echo "$clean"
+printf '%s\n' "$clean"
 
