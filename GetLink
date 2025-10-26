@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# --- handle argument(s) safely ---
+if [ "$#" -lt 1 ]; then
+  echo "Usage: $0 <facebook-redirect-or-url>"
+  exit 1
+fi
+
+input="$*"
+
+# Extract u= parameter (the encoded target) if present
+uval=$(printf '%s' "$input" | sed -n 's/.*[?&]u=\([^&]*\).*/\1/p')
+if [ -n "$uval" ]; then
+  target="$uval"
+else
+  target="$input"
+fi
+
+# Decode URL and clean it
+clean=$(python3 - "$target" <<'PYCODE'
+import sys, urllib.parse as u, re
+
+raw = sys.argv[1]
+decoded = u.unquote(raw)
+
+parts = u.urlparse(decoded)
+qs = u.parse_qsl(parts.query, keep_blank_values=True)
+filtered = [(k,v) for (k,v) in qs if k.lower() != 'fbclid']
+
+new_query = u.urlencode(filtered, doseq=True)
+new_url = u.urlunparse((parts.scheme, parts.netloc, parts.path, parts.params, new_query, parts.fragment))
+
+# Remove anything after .html (query, fragments, etc.)
+new_url = re.sub(r'(\.html).*', r'\1', new_url, flags=re.IGNORECASE)
+
+print(new_url)
+PYCODE
+)
+
+echo "$clean"
+
