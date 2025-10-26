@@ -34,7 +34,7 @@ new_url = u.urlunparse((parts.scheme, parts.netloc, parts.path, parts.params, ne
 # Remove anything after .html (query, fragments, etc.)
 new_url = re.sub(r'(\.html).*', r'\1', new_url, flags=re.IGNORECASE)
 
-print(new_url)
+print('\n'+new_url)
 PYCODE
 )
 
