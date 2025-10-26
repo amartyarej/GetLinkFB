@@ -1,36 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage() {
-  cat <<EOF
-Usage: $0 <url>
-   or:  $0 -         # read a single line URL from stdin (recommended for unquoted URLs containing &)
-   or:  echo URL | $0
-
-Note: If you pass a URL containing characters like & or ; directly on the command line, the shell
-will try to interpret them unless you quote or escape the URL. To avoid quoting, use the '-' stdin mode.
-EOF
-  exit 1
-}
+# ---- Settings ----
+RESOLVE_SPONSORED=true   # Follow sponsored redirect tokens via curl (set false for offline-only)
+USER_AGENT="Mozilla/5.0 (compatible; CleanLinkBot/1.0)"  # neutral UA for privacy
+CURL_OPTS=(-Ls -o /dev/null -A "$USER_AGENT" -w '%{url_effective}')
 
 if [ "$#" -lt 1 ]; then
-  usage
+  echo "Usage: $0 <facebook-link-or-url>"
+  echo "  or: echo URL | $0"
+  exit 1
 fi
 
-# Read URL:
+# Read argument (supports stdin too)
 if [ "$1" = "-" ]; then
-  # Read a single line from stdin
-  if ! IFS= read -r input; then
-    echo "No input received on stdin." >&2
-    exit 2
-  fi
+  IFS= read -r input || { echo "No input received"; exit 2; }
 else
-  # Use the positional arguments joined by spaces if multiple provided
-  # (Note: if you typed an unquoted URL containing &, the shell already split/handled it)
   input="$*"
 fi
 
-# Extract u= (Facebook redirect) if present
+# Extract u= parameter
 uval=$(printf '%s' "$input" | sed -n 's/.*[?&]u=\([^&]*\).*/\1/p' || true)
 if [ -n "$uval" ]; then
   target="$uval"
@@ -38,47 +27,52 @@ else
   target="$input"
 fi
 
-# Python does decode, filter fbclid, and truncate after desired extensions
-clean=$(python3 - "$target" <<'PYCODE'
+# URL-decode once
+decoded=$(python3 -c "import urllib.parse,sys;print(urllib.parse.unquote(sys.argv[1]))" "$target")
+
+# Decide if the decoded part is a real URL
+if [[ "$decoded" =~ ^https?:// ]]; then
+  url="$decoded"
+else
+  if [ "$RESOLVE_SPONSORED" = true ]; then
+    url=$(curl "${CURL_OPTS[@]}" "$input" 2>/dev/null || echo "")
+    if [ -z "$url" ]; then
+      echo -e "\n(Unable to resolve sponsored redirect)"
+      exit 0
+    fi
+  else
+    echo -e "\n(Facebook sponsored redirect — cannot decode offline)"
+    exit 0
+  fi
+fi
+
+# Clean URL
+clean=$(python3 - "$url" <<'PYCODE'
 import sys, urllib.parse as u, re
 
-raw = sys.argv[1]
-decoded = u.unquote(raw)
-
-# Parse URL
+decoded = sys.argv[1]
 parts = u.urlparse(decoded)
 qs = u.parse_qsl(parts.query, keep_blank_values=True)
 
-# Remove fbclid (case-insensitive)
-filtered = [(k,v) for (k,v) in qs if k.lower() != 'fbclid']
+# --- Remove common tracking parameters ---
+bad_params = {
+    'fbclid','utm_source','utm_medium','utm_campaign','utm_term','utm_content',
+    'ref','ref_src','ref_url','gclid','yclid','mc_cid','mc_eid','icid',
+    'sr_share','mkt_tok','pk_campaign','pk_kwd','trackingid','trk','cmpid'
+}
+filtered = [(k,v) for (k,v) in qs if k.lower() not in bad_params]
 
 new_query = u.urlencode(filtered, doseq=True)
 new_url = u.urlunparse((parts.scheme, parts.netloc, parts.path, parts.params, new_query, parts.fragment))
 
-# If URL has no scheme/netloc, just use decoded
-if not parts.scheme and not parts.netloc:
-    candidate = decoded
-else:
-    candidate = new_url
-
-# Trim anything after these extensions (case-insensitive). Add more if you wish.
+# --- Trim after web extensions ---
 exts = ['html','htm','php','asp','aspx','jsp','jspx','shtml','cgi','pl','rss','xml','json']
-# Build pattern like: r'(?i)(\.(?:html|php|...))\b.*'
 pattern = r'(?i)(\.(?:' + '|'.join(re.escape(e) for e in exts) + r'))\b.*'
-trimmed = re.sub(pattern, r'\1', candidate, count=1)
+cleaned = re.sub(pattern, r'\1', new_url, count=1)
 
-# If no recognized extension found, return the cleaned URL without query/fragment if possible
-if trimmed == candidate:
-    # Try removing query and fragment in general
-    p = u.urlparse(candidate)
-    trimmed = u.urlunparse((p.scheme, p.netloc, p.path, p.params, '', ''))
-    # If still empty-ish, fallback to candidate
-    if not p.scheme and not p.netloc:
-        trimmed = candidate
-
-print('\n'+trimmed)
+print('\n'+cleaned)
 PYCODE
 )
 
-printf '%s\n' "$clean"
+echo "$clean"
 
