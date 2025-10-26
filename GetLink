@@ -37,11 +37,11 @@ else
   if [ "$RESOLVE_SPONSORED" = true ]; then
     url=$(curl "${CURL_OPTS[@]}" "$input" 2>/dev/null || echo "")
     if [ -z "$url" ]; then
-      echo -e "\n(Unable to resolve sponsored redirect)"
+      echo -e "\nUnable to resolve sponsored redirect"
       exit 0
     fi
   else
-    echo -e "\n(Facebook sponsored redirect — cannot decode offline)"
+    echo -e "\nFacebook sponsored redirect — cannot decode offline"
     exit 0
   fi
 fi
