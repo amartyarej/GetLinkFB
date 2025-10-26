@@ -7,9 +7,9 @@ Get any link copied from Facebook posts cleaned of tracking and filters
 git clone <repository-link>
 cd <repository-folder>
 ```
-2. **Make the file X executable:**
+2. **Make the file GetLink executable:**
 ```
-chmod +x X
+chmod +x GetLink
 ```
 3. **Create a symlink to `~/.local/bin/GetLink`:**
 ```
