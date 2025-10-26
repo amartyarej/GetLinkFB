@@ -4,8 +4,8 @@ Get any link copied from Facebook posts cleaned of tracking and filters
 
 1. **Clone the repository:**
 ```
-git clone <repository-link>
-cd <repository-folder>
+git clone https://github.com/amartyarej/GetLinkFB.git
+cd GetLinkFB/
 ```
 2. **Make the file GetLink executable:**
 ```
